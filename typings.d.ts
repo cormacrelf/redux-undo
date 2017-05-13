@@ -5,6 +5,7 @@ declare module 'redux-undo' {
     past: State[];
     present: State;
     future: State[];
+    metadata: string;
   }
 
   export type FilterFunction = (action: Action) => boolean;

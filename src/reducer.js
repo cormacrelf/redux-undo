@@ -7,68 +7,84 @@ function lengthWithoutFuture (history) {
   return history.past.length + 1
 }
 
+// mix in state with metadata about the action that produced it
+function wrap(state, metadata) {
+    return { state, metadata }
+}
+
+// helper for readability.
+function unwrap(state) {
+    return state;
+}
+
 // insert: insert `state` into history, which means adding the current state
 //         into `past`, setting the new `state` as `present` and erasing
 //         the `future`.
-function insert (history, state, limit) {
+function insert (history, state, newMeta, limit) {
   debug.log('inserting', state)
   debug.log('new free: ', limit - lengthWithoutFuture(history))
 
-  const { past, _latestUnfiltered } = history
+  const { past, _latestUnfiltered, metadata: oldMeta } = history
   const historyOverflow = limit && lengthWithoutFuture(history) >= limit
 
   const pastSliced = past.slice(historyOverflow ? 1 : 0)
   const newPast = _latestUnfiltered != null
     ? [
       ...pastSliced,
-      _latestUnfiltered
+      wrap(_latestUnfiltered, oldMeta)
     ] : pastSliced
 
   return {
     past: newPast,
     present: state,
     _latestUnfiltered: state,
+    metadata: newMeta,
+    redoMeta: null,
     future: []
   }
 }
 
 // undo: go back to the previous point in history
 function undo (history) {
-  const { past, future, _latestUnfiltered } = history
+  const { past, future, metadata, _latestUnfiltered } = history
 
   if (past.length <= 0) return history
 
   const newFuture = _latestUnfiltered != null
     ? [
-      _latestUnfiltered,
+      wrap(_latestUnfiltered, metadata),
       ...future
     ] : future
 
-  const newPresent = past[past.length - 1]
+  const { state: newPresent, metadata: pastMeta } = unwrap(past[past.length - 1]);
   return {
     past: past.slice(0, past.length - 1), // remove last element from past
     present: newPresent, // set element as new present
+    metadata: pastMeta,
     _latestUnfiltered: newPresent,
+    redoMeta: null,
     future: newFuture
   }
 }
 
 // redo: go to the next point in history
 function redo (history) {
-  const { past, future, _latestUnfiltered } = history
+  const { past, future, metadata: presentMeta, _latestUnfiltered } = history
 
   if (future.length <= 0) return history
 
   const newPast = _latestUnfiltered != null
     ? [
       ...past,
-      _latestUnfiltered
+      wrap(_latestUnfiltered, presentMeta)
     ] : past
 
-  const newPresent = future[0]
+  const { state: newPresent, metadata: futureMeta } = unwrap(future[0])
   return {
     future: future.slice(1, future.length), // remove element from future
     present: newPresent, // set element as new present
+    metadata: futureMeta,
+    redoMeta: futureMeta,
     _latestUnfiltered: newPresent,
     past: newPast
   }
@@ -79,15 +95,17 @@ function jumpToFuture (history, index) {
   if (index === 0) return redo(history)
   if (index < 0 || index >= history.future.length) return history
 
-  const { past, future, _latestUnfiltered } = history
+  const { past, future, _latestUnfiltered, metadata } = history
 
-  const newPresent = future[index]
+  const { state: newPresent, metadata: newMeta } = unwrap(future[index])
 
   return {
     future: future.slice(index + 1),
     present: newPresent,
     _latestUnfiltered: newPresent,
-    past: past.concat([_latestUnfiltered])
+    metadata: newMeta,
+    redoMeta: null,
+    past: past.concat([wrap(_latestUnfiltered, metadata)])
       .concat(future.slice(0, index))
   }
 }
@@ -97,16 +115,18 @@ function jumpToPast (history, index) {
   if (index === history.past.length - 1) return undo(history)
   if (index < 0 || index >= history.past.length) return history
 
-  const { past, future, _latestUnfiltered } = history
+  const { past, future, _latestUnfiltered, metadata } = history
 
-  const newPresent = past[index]
+  const { state: newPresent, metadata: newMeta } = unwrap(past[index])
 
   return {
     future: past.slice(index + 1)
-      .concat([_latestUnfiltered])
+      .concat([wrap(_latestUnfiltered, metadata)])
       .concat(future),
     present: newPresent,
     _latestUnfiltered: newPresent,
+    metadata: newMeta,
+    redoMeta: null,
     past: past.slice(0, index)
   }
 }
@@ -126,11 +146,15 @@ function createHistory (state, ignoreInitialState) {
   return ignoreInitialState ? {
     past: [],
     present: state,
+    metadata: null,
+    redoMeta: null,
     future: []
   } : {
     past: [],
     present: state,
     _latestUnfiltered: state,
+    redoMeta: null,
+    metadata: null,
     future: []
   }
 }
@@ -148,6 +172,7 @@ export default function undoable (reducer, rawConfig = {}) {
     initTypes: parseActions(rawConfig.initTypes, ['@@redux-undo/INIT']),
     limit: rawConfig.limit,
     filter: rawConfig.filter || (() => true),
+    describe: rawConfig.describe || (() => null),
     collapse: rawConfig.collapse || false,
     undoType: rawConfig.undoType || ActionTypes.UNDO,
     redoType: rawConfig.redoType || ActionTypes.REDO,
@@ -260,14 +285,14 @@ export default function undoable (reducer, rawConfig = {}) {
           const nextState = {
             ...history,
             present: res,
-            _latestUnfiltered: config.collapse ? res : _latestUnfiltered,
+            _latestUnfiltered: config.collapse ? res : history._latestUnfiltered,
           }
           debug.log('filter prevented action, not storing it')
           debug.end(nextState)
           return nextState
         } else {
           // If the action wasn't filtered, insert normally
-          history = insert(history, res, config.limit)
+          history = insert(history, res, config.describe(action), config.limit)
 
           debug.log('inserted new state into history')
           debug.end(history)
