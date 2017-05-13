@@ -59,6 +59,9 @@ declare module 'redux-undo' {
     
     /** Set to `true` to prevent undoable from skipping the reducer on undo/redo **/
     neverSkipReducer?: boolean;
+
+    /** Set to `true` to collapse filtered-out actions into the next history state inserted, rather than discarding completely on undo. */
+    collapse?: boolean;
   }
 
   interface Undoable {

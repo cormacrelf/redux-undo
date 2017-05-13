@@ -148,6 +148,7 @@ export default function undoable (reducer, rawConfig = {}) {
     initTypes: parseActions(rawConfig.initTypes, ['@@redux-undo/INIT']),
     limit: rawConfig.limit,
     filter: rawConfig.filter || (() => true),
+    collapse: rawConfig.collapse || false,
     undoType: rawConfig.undoType || ActionTypes.UNDO,
     redoType: rawConfig.redoType || ActionTypes.REDO,
     jumpToPastType: rawConfig.jumpToPastType || ActionTypes.JUMP_TO_PAST,
@@ -258,7 +259,8 @@ export default function undoable (reducer, rawConfig = {}) {
           // if filtering an action, merely update the present
           const nextState = {
             ...history,
-            present: res
+            present: res,
+            _latestUnfiltered: config.collapse ? res : _latestUnfiltered,
           }
           debug.log('filter prevented action, not storing it')
           debug.end(nextState)
